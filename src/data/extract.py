@@ -1,92 +1,117 @@
 # ============================================================
-#  src/data/extract.py  — Pull tables from SQL Server
+#  src/data/extract.py
+#  Extract core tables from Asysnap SQL Server database
 # ============================================================
 
 import pandas as pd
 import os
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-from config.db_config import query_to_df, list_tables
+# Add project root to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from config.db_config import query_to_df
 
-RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'raw')
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ============================================================
+# SQL QUERIES
+# ============================================================
 
-def extract_table(table_name: str, schema: str = "dbo", save: bool = True) -> pd.DataFrame:
+QUERIES = {
+
+    "facture": """
+        SELECT 
+            FACT1, CDCLIE, DATE1, TYPEF,
+            MONTHT, REMISE, MONTHTNET,
+            MODEPAY, DEPOT, TRIMESTRE,
+            CODED, UTILISATEUR
+        FROM FACTURE
+        WHERE TYPEF = 'F'
+        AND MONTHTNET IS NOT NULL
+    """,
+
+    "ligfac": """
+        SELECT 
+            L.FACT1, L.PROD, L.QTEFAC, L.PRIXFAC,
+            L.MONTLIG, L.REMISEP, L.GAMME, L.FAM,
+            L.CDCLIE, L.TYPECL, L.CODED,
+            F.DESIGNE as NomProduit,
+            G.DESGAM as NomGamme,
+            FA.DESFAM as NomFamille
+        FROM LIGFAC L
+        LEFT JOIN FPROD F ON L.PROD = F.PROD
+        LEFT JOIN FAMILLE FA ON F.FAM = FA.FAM
+        LEFT JOIN GAMME G ON FA.GAMME = G.GAMME
+    """,
+
+    "client": """
+        SELECT 
+            CDCLIE, RAISON, TYPECL,
+            MODEPAY, SECTEUR, ACTIVITE,
+            ADR, adresse, ADRESSE1,
+            DEBIT, CREDIT, ECHEANCE,
+            DATE_SAISIE, VIGUEUR
+        FROM CLIENT
+    """,
+
+    "article": """
+        SELECT 
+            PROD, DESIGNE, FAM, GAMME
+        FROM FPROD
+    """,
+
+    "stock": """
+        SELECT 
+            NFICHE, NATURE, ATEL,
+            QTE_INI, QTE_ENT, QTE_SOR,
+            CUMP, STR
+        FROM STOCK
+    """,
+
+    "gamme": """
+        SELECT GAMME, DESGAM FROM GAMME
+    """,
+
+    "famille": """
+        SELECT FAM, DESFAM, GAMME FROM FAMILLE
     """
-    Extract a full table from SQL Server and optionally save to data/raw/.
+}
 
-    Args:
-        table_name: Name of the SQL table
-        schema: Schema name (default: dbo)
-        save: If True, saves result as CSV in data/raw/
+# ============================================================
+# EXTRACTION FUNCTION
+# ============================================================
 
-    Returns:
-        DataFrame with table contents
-    """
-    print(f"📥 Extracting [{schema}].[{table_name}]...")
-    sql = f"SELECT * FROM [{schema}].[{table_name}]"
-    df = query_to_df(sql)
-    print(f"   ✅ {len(df):,} rows × {len(df.columns)} columns")
+def extract_all(save=True):
+    """Extract all core tables and optionally save to CSV."""
+    dataframes = {}
 
-    if save:
-        os.makedirs(RAW_DIR, exist_ok=True)
-        path = os.path.join(RAW_DIR, f"{table_name}.csv")
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        print(f"   💾 Saved to data/raw/{table_name}.csv")
-
-    return df
-
-
-def extract_all_tables(save: bool = True) -> dict:
-    """
-    Extract ALL tables in the database and save them as CSVs.
-
-    Returns:
-        dict of {table_name: DataFrame}
-    """
-    tables_df = list_tables()
-    results = {}
-    print(f"🗄️  Found {len(tables_df)} tables to extract\n")
-
-    for _, row in tables_df.iterrows():
-        name = row["TABLE_NAME"]
-        schema = row["TABLE_SCHEMA"]
+    for name, sql in QUERIES.items():
+        print(f"⏳ Extracting {name.upper()}...")
         try:
-            results[name] = extract_table(name, schema, save=save)
+            df = query_to_df(sql)
+            print(f"   ✅ {len(df)} rows extracted")
+
+            if save:
+                path = os.path.join(OUTPUT_DIR, f"{name}.csv")
+                df.to_csv(path, index=False, encoding='utf-8-sig')
+                print(f"   💾 Saved to data/raw/{name}.csv")
+
+            dataframes[name] = df
+
         except Exception as e:
-            print(f"   ❌ Failed to extract {name}: {e}")
+            print(f"   ❌ Failed: {e}")
 
-    print(f"\n✅ Done. Extracted {len(results)} tables.")
-    return results
-
-
-def extract_custom(sql: str, label: str = "custom", save: bool = False) -> pd.DataFrame:
-    """Run a custom SQL query and return as DataFrame."""
-    print(f"🔍 Running custom query: {label}")
-    df = query_to_df(sql)
-    print(f"   ✅ {len(df):,} rows × {len(df.columns)} columns")
-
-    if save:
-        path = os.path.join(RAW_DIR, f"{label}.csv")
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        print(f"   💾 Saved to data/raw/{label}.csv")
-    return df
+    print(f"\n🎉 Extraction complete! {len(dataframes)} tables extracted.")
+    return dataframes
 
 
-# ── Run this file directly to test the extraction ────────────
+def extract_table(name):
+    """Extract a single table by name."""
+    if name not in QUERIES:
+        raise ValueError(f"Unknown table: {name}. Available: {list(QUERIES.keys())}")
+    return query_to_df(QUERIES[name])
+
+
 if __name__ == "__main__":
-    print("=" * 50)
-    print("  Data Extraction Script")
-    print("=" * 50)
-    
-    print("\nTesting extraction with two core tables: CLIENT and ARTICLE")
-    try:
-        extract_all_tables()
-        print("\n✅ Extraction complete. Check the 'data/raw/' directory!")
-        
-        print("\n💡 NOTE: To extract ALL 263 tables, run this in a notebook instead:")
-        print("   from src.data.extract import extract_all_tables")
-        print("   extract_all_tables()")
-    except Exception as e:
-        print(f"\n❌ Extraction failed: {e}")
+    extract_all(save=True)
